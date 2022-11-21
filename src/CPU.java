@@ -1,7 +1,8 @@
+import java.time.LocalDateTime;
 import java.util.Arrays;
 import java.util.List;
+import java.util.stream.Collectors;
 import java.util.stream.DoubleStream;
-import org.javatuples.Pair;
 
 
 public class CPU extends Player {
@@ -18,7 +19,7 @@ public class CPU extends Player {
         GRANDMASTER(0.05) // uses only the best strategies. Massively lower hint rate (MLHR).
         ;
 
-        public final double hRate;
+        final double hRate;
         archetype(double hR) {
             hRate = hR;
         }
@@ -26,15 +27,23 @@ public class CPU extends Player {
 
     archetype atype;
     double hintRate; // 0.0 - 1.0. Higher = more hints (bad for winning)
+    List<Player> opponents;
 
+
+    // Wikian-only attributes
     boolean hasWikianStrategiesRolled;
-    double wikianRerollChance; // (WIKIAN) Chance that all strategies will be rerolled. Guaranteed 0% first two games, then +10% each add'l game.
+    double wikianRerollChance; // Chance that all strategies will be rerolled. Guaranteed 0% first two games, then +10% each add'l game.
     int turnsSinceReroll;
 
     public CPU() {
         atype = weightedRandom(archetype.values(), new double[]{0.3, 0.08, 0.08, 0.08, 0.1, 0.09, 0.1, 0.05, 0.1, 0.02}, false);
         hintRate = proximityRandom(atype.hRate, 0.1, 0.05);
         turnsSinceReroll = 0;
+
+        opponents = players
+                .stream()
+                .filter(p -> !p.equals(this))
+                .collect(Collectors.toList());
 
 
         if (atype.name().equals("WIKIAN")) { // Wikian archetype
@@ -51,6 +60,12 @@ public class CPU extends Player {
         else
             hintRate = proximityRandom(hR, 0.1, 0.05);
 
+        opponents = players
+                .stream()
+                .filter(p -> !p.equals(this))
+                .collect(Collectors.toList());
+
+
 
         if (atype.name().equals("WIKIAN")) { // Wikian archetype
             hasWikianStrategiesRolled = false;
@@ -60,6 +75,8 @@ public class CPU extends Player {
     }
 
     public brpsChoices archetypedChoice() { // todo: custom messages for each archetype! Hints at the CPU's archetype and adds some flair (e.g. "Your opponent anxiously looks at their watch." "Your opponent holds a stern poker face and grins.")
+        double[] weights = {0, 0.3333, 0.3333, 0.3333};
+
         switch (atype) {
             case NONE -> {
                 return randomizeChoice();
@@ -78,15 +95,10 @@ public class CPU extends Player {
             }
 
             case STRATEGIST -> {
-                double[] weights = {0, 0.3333, 0.3333, 0.3333};
-
                 for (brpsChoices choice : choiceCache.subList(choiceCache.size()-2, choiceCache.size())) {
                     int winnerOrdinal = (choice.ordinal() + 1 > 3) ? 1 : choice.ordinal() + 1; // See below chart for logic. This wraps value back to 1 if exceeding max index (3).
                     editWeights(weights, winnerOrdinal, 0.15);
                 }
-
-                return weightedRandom(brpsChoices.values(), weights,false);
-
 
                 // Given choice...
                 //  0       1        2       3
@@ -101,25 +113,31 @@ public class CPU extends Player {
             }
 
             case WATCHREADER -> {
+                // TIMES:                 8:00 = bird,         16:00 = boulder,         24:00 = blanket
+                // BOOST INTERVALS:   (1) 4:00-12:00 bird, (2) 12:00-20:00 boulder, (3) 20:00-4:00 blanket
+                // ORDINALS:                   (3)                     (1)                    (2)
+                // Only one option is boosted per time. Boost is relative to how close it is to each option.
+                double hourTime = (double) LocalDateTime.now().getSecond() / 3600;
+                brpsChoices intervalChoice = (hourTime < 12) ? ((hourTime > 4) ? brpsChoices.BIRD : brpsChoices.BLANKET) : ((hourTime < 20) ? brpsChoices.BOULDER : brpsChoices.BLANKET); // 4 < time < 12 = bird, 12 < time < 20 = boulder, everything else = blanket
+                int hourMarker = ((intervalChoice.ordinal() + 1 > 3) ? 1 : intervalChoice.ordinal() + 1) * 8; // 8 * interval # (equivalent to ordinal+1) = time marker.
 
+                editWeights(weights, intervalChoice.ordinal(), 0.7 - (Math.abs(hourMarker - hourTime) * 0.175)); // Formula: 0.7 - |(n - m) * 0.175|. Thus, at max difference (4 hr), =0 and at min difference (0 hr), =0.7.
             }
 
 
             case AMATEUR -> {
-                double[] weights = {0, 0.3333, 0.3333, 0.3333};
-
                 for (brpsChoices choice : choiceCache.subList(choiceCache.size()-2, choiceCache.size())) {
                     editWeights(weights, choice.ordinal(), 0.2);
                 }
-
-                return weightedRandom(brpsChoices.values(), weights, false);
             }
 
 
-            case PROGRAMMER -> { // todo: roll all values below
-                int programDepth = 3; // How in-depth the program gets.
-                double bugChance = 0.15; // The chance the program will run with diff behavior. Increases hintRate due to panic/confusion.
-                double errorChance = 0.05; // Error = the program is completely unrunnable, hintRate is very high and CPU resorts to Amateur behavior.
+            case PROGRAMMER -> {
+                int programDepth = (int) proximityRandom(2.0, 1.0, 3.0); // How in-depth the program gets.
+                double bugChance = proximityRandom(0.15, 0.3, 0.3); // The chance the program will run with diff behavior. Increases hintRate due to panic/confusion.
+                double errorChance = proximityRandom(0.05, 0.02, 0.1); // Error = the program is completely unrunnable, hintRate is very high and CPU resorts to Amateur behavior.
+
+
             }
 
             case WIKIAN -> { // https://www.wikihow.com/Win-at-Rock,-Paper,-Scissors
@@ -136,7 +154,6 @@ public class CPU extends Player {
                 // It may be even harder to play a wikian than a grandmaster because every few games strategies are rerolled -- although often there are very few strategies, and thus the wikian picks like an amateur.
 
 
-                double[] weights = {0, 0.3333, 0.3333, 0.3333};
                 double[] strategyFailChance = {0.1, 0, 0.2, 0.6, 0.7, 0.3, 0.1}; // The chance a strategy will not be used at all.
                 double[] usageFailChance = {0.1, 0.05, 0.1, 0.3, 0.2, 0.1, 0.05}; // The chance a picked strategy will fail (lower than sChance). Increases gradually and plateaus after 2 games.
 
@@ -152,6 +169,7 @@ public class CPU extends Player {
                     for (int i = 0; i < 7; i++)
                         usageFailChance[i] = (Math.random() > strategyFailChance[i]) ? 1.0 : usageFailChance[i]; // If strategy is not to be used, set its fail chance to 100%.
 
+                    turnsSinceReroll = 0;
                     hasWikianStrategiesRolled = true;
                 }
 
@@ -160,7 +178,21 @@ public class CPU extends Player {
                     if (Math.random() > usageFailChance[i]) {
                         switch (i) {
                             case 0 -> { // Axiom 1: opponent same move twice = use winning move to other choices // RPS sequence priority
-                                players.get(players.indexOf(this)-1)
+                                for (brpsChoices choice : opponents.get(0).choiceCache.subList(choiceCache.size()-2, choiceCache.size())) {
+                                    int winnerOrdinalToNext = (choice.ordinal() + 2 > 3) ? 1 : choice.ordinal() + 1; // todo: TESTME
+
+                                    // given choice
+                                    // 0              1       2        3
+                                    // none     boulder  blanket   bird
+
+                                    // winner to next in RPS sequence
+                                    // 0          3        1         2
+                                    // none    bird     blanket  boulder
+
+                                    // Thus the winnerOrdinalToNext = given choice ordinal + 2.
+
+                                    editWeights(weights, weightedRandom(new Integer[]{winnerOrdinalToNext, winnerOrdinalToNext + 1}, new double[]{0.7, 0.3}, false), 0.15);
+                                }
                             }
 
                             case 1 -> { // Axiom 2: play scissors first round
@@ -174,27 +206,29 @@ public class CPU extends Player {
                             }
 
                             case 3 -> { // Axiom 4: look for hand hints
-                                if ()
+                                
                             }
 
-                            case 4 -> {
-
-                            }
-
-                            case 5 -> {
+                            case 4 -> { // Axiom 5: reverse psych
 
                             }
 
-                            case 6 -> {
-                                editWeights(weights, 2, 0.5); // weighted paper > scissors > rock
-                                editWeights(weights, 3, 0.2);
+                            case 5 -> { // Axiom 6: predict rock if opponent has lost 3x
+                                Object[] lastThreeStates = opponents.get(0).stateCache.subList(stateCache.size()-3, stateCache.size()).toArray();
+                                if (Arrays.stream(lastThreeStates).allMatch(s -> s.equals(brpsStates.LOSE))) { // Opponent lost 3x
+                                    return brpsChoices.BLANKET; // Blanket to kill boulder
+                                }
+                            }
+
+                            case 6 -> { // Axiom 7: Paper > scissors > rock in general
+                                editWeights(weights, 2, 0.5); // 1st-size weight on paper
+                                editWeights(weights, 3, 0.2); // 2nd-size weight on scissors
                             }
                         }
                     }
                 }
 
                 turnsSinceReroll++;
-                return weightedRandom(brpsChoices.values(), weights, false);
             }
 
             case GRANDMASTER -> { // RPS is a luck-based game. However, professionals try to trick their opponents. Maybe some of that psychology can be implemented to trick the player.
@@ -203,8 +237,9 @@ public class CPU extends Player {
 
 
             }
-
         }
+
+        return weightedRandom(brpsChoices.values(), weights, false);
     }
 
 
@@ -240,7 +275,15 @@ public class CPU extends Player {
 
 
     // Returns a random number that's near a base #. lower is how much below base, upper is how much above base. See proof.
-    public double proximityRandom(double base, double lowerOffset, double upperOffset) { // <+> APM
+    public static double proximityRandom(double base, double lowerOffset, double upperOffset) { // <+> APM
         return Math.random()*(lowerOffset + upperOffset) + base - lowerOffset;
+    }
+
+    public static List<String> generateArchetypeProgram(int depth) {
+
+    }
+
+    public static List<String> compileArchetypeProgram() {
+
     }
 }

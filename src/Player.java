@@ -5,10 +5,13 @@
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.stream.Collectors;
 
 public class Player extends BrpsGame
 {
     List<brpsChoices> choiceCache;
+    List<brpsStates> stateCache;
+    List<Player> opponents;
     brpsChoices choice;       //          0                  1             2          3        4       5
     int[] stats = new int[6]; // # of boulders played, # of blankets, # of birds, victories, losses, ties
 
@@ -16,14 +19,26 @@ public class Player extends BrpsGame
     public Player() {
         choice = brpsChoices.NONE;
         choiceCache = new ArrayList<>();
-       Arrays.fill(stats, 0);
+        stateCache = new ArrayList<>();
+        Arrays.fill(stats, 0);
+
+        opponents = players
+                .stream()
+                .filter(p -> !p.equals(this)) // All players except this player
+                .collect(Collectors.toList());
     }
 
     public Player(brpsChoices ch, int[] st) {
         assert(st.length == stats.length) : "Player instantiation failed: stats length (" + st.length + ") does not match required length (" + stats.length + ")!";
         choice = ch;
         choiceCache = new ArrayList<>();
+        stateCache = new ArrayList<>();
         stats = st;
+
+        opponents = players
+                .stream()
+                .filter(p -> !p.equals(this))
+                .collect(Collectors.toList());
     }
 
     public void retrieveChoice(int playerIndex) { // REFACTOR
@@ -69,9 +84,12 @@ public class Player extends BrpsGame
             }
         }
 
-        if (choiceCache.size() > 10) // Cache of limit of 10
+        if (choiceCache.size() > 10) // Choice cache (limit 10)
             choiceCache.remove(0);
-
         choiceCache.add(choice);
+
+        if (stateCache.size() > 10) // Game state cache (limit 10)
+            stateCache.remove(0);
+        stateCache.add(gameState);
     }
 }
