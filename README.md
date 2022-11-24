@@ -4,6 +4,6 @@
 The famous classic game you know and love with a humble little twist.
 <br><br>
 #
-> For cross-platform testing, look into applets, maybe. Or JSP. Or MySQL. I _definitely_ know what I'm doing.
+> For cross-platform testing, look into applets, maybe. Or JSP. Or Tomcat. I _definitely_ know what I'm doing.
 
 
