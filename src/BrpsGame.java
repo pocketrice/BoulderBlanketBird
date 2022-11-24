@@ -4,25 +4,32 @@
 
 import java.util.*;
 import java.util.concurrent.TimeUnit;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+import java.util.stream.Collectors;
+
 import org.javatuples.Pair;
 import org.apache.commons.lang3.ArrayUtils;
+import org.javatuples.Tuple;
+import org.javatuples.Unit;
 
 public class BrpsGame
 {
 	private int remainingGames, totalGames;
 	private int[] setScore; // Useful for maybe "loading" mid-game for replay.
-	brpsStates gameState;
 
 
 	public static Scanner input = new Scanner(System.in);
 
 	// MESSAGE EMBELLIMS
-	public static Set<String> topics;
-	public static Set<Pair<brpsChoices, String>> choiceEmbellims;
-	public static Set<Pair<brpsChoices, String>> hintEmbellims;
-	public static Set<Pair<CPU.archetype, String>> archetypeHintEmbellims;
-	public static Set<String> failedHintEmbellims;
-	public static Set<Pair<brpsChoices, String>> stateEmbellims;
+	public static Set<Unit<String>> topics = new HashSet<>();
+	public static Set<Pair<choices, String>> revPsychEmbellims = new HashSet<>();
+	public static Set<Pair<choices, String>> choiceEmbellims = new HashSet<>();
+	public static Set<Pair<choices, String>> hintEmbellims = new HashSet<>();
+	public static Set<Pair<CPU.archetype, String>> archetypeHintEmbellims = new HashSet<>();
+	public static Set<Unit<String>> failedHintEmbellims = new HashSet<>();
+	public static Set<Pair<choices, String>> winEmbellims = new HashSet<>();
+	public static Set<Pair<choices, String>> tieEmbellims = new HashSet<>();
 
 
 	public static final String ANSI_RESET = "\u001B[0m";
@@ -33,14 +40,14 @@ public class BrpsGame
 	public static final String ANSI_PURPLE = "\u001B[35m";
 	public static final String ANSI_CYAN = "\u001B[36m";
 
-	enum brpsChoices {
+	enum choices {
 		NONE,
 		BOULDER,
 		BLANKET,
 		BIRD,
 	}
 
-	enum brpsStates {
+	enum gameStates {
 		WIN,
 		LOSE,
 		TIE,
@@ -67,8 +74,8 @@ public class BrpsGame
 	public static void main(String[] args) throws InterruptedException {
 		populateEmbellims();
 
-		BrpsGame bGame = new BrpsGame( (int) prompt("How many rounds to play? (max 15 rounds)", "Error: invalid number.", 1, 15, true), new int[]{0,0});
-		int totalPlayerCount = (int) prompt("How many players will be playing (both CPU or human)?", "Error: invalid number. Clamped to 2 temporarily.", 2, 2, true);
+		BrpsGame bGame = new BrpsGame( (int) prompt("How many rounds shall we play? (max 15 rounds)", "Error: invalid number.", 1, 15, true), new int[]{0,0});
+		int totalPlayerCount = (int) prompt("How many players will be playing (both CPU and human)?", "Error: invalid number. Clamped to 2 temporarily.", 2, 2, true);
 		int humanPlayerCount = (int) prompt("How many human players?", "Error: invalid number.", 0, 2, true);
 		int cpuPlayerCount = totalPlayerCount - humanPlayerCount;
 
@@ -80,73 +87,85 @@ public class BrpsGame
 			players.add(new CPU());
 		}
 
+		players.forEach(Player::retrieveOpponents);
+
 
 
 		while (true) {
 			if (bGame.remainingGames > 0) {
+				System.out.println(ANSI_YELLOW + "\n\t\t\t\t\t\t\t「  GAME " + (bGame.totalGames - bGame.remainingGames + 1) + "  」\t\t");
+				System.out.println("==================================================================================" + ANSI_RESET);
 				//players = reorderList(players, determineOrder(players));
+				players.forEach(e -> e.choice = choices.NONE); // Reset player choices at beginning of each game
 				playerOrder = determineOrder(players);
 
 				for (int pIndex : playerOrder) {
 					Player player = players.get(pIndex);
+					player.hasPlayerAhead = !(pIndex == playerOrder.length - 1); // If index is at end of playerOrder, then there is no player ahead.
 
 					if (player instanceof CPU) { // CPU
-						System.out.println(ANSI_BLUE + "It is now Player " + players.indexOf(player) + "'s turn (CPU)." + ANSI_RESET);
-						fancyDelay(500);
-						player.choice = ((CPU) player).archetypedChoice(); // (CPU)player ensures player is type CPU.
-						System.out.println(ANSI_PURPLE + "\nP" + players.indexOf(player) + " finished choosing hand.\n\n" + ANSI_RESET);
+						System.out.println(ANSI_BLUE + "➢ It is now Player " + (players.indexOf(player) + 1) + "'s turn (CPU)." + ANSI_RESET);
+						fancyDelay(500, "Thinking...");
+
+						if (player.choice == choices.NONE) {
+							player.choice = ((CPU) player).archetypedChoice(); // (CPU)player ensures player is type CPU.
+						}
 					}
 
 					else { // Human
-						try {
-							players.get(players.indexOf(player) + 1);
+						System.out.println(ANSI_BLUE + "➢ It is now Player " + (players.indexOf(player) + 1) + "'s turn (Human)." + ANSI_RESET);
 
-							if (players.get(players.indexOf(player) + 1) instanceof CPU) { // There is an index ahead AND that next index is a CPU.
-								switch (prompt("You have a chance to peek at your opponent's move. Want to try?", "Error: pick yes or no.", new String[]{"yes", "no"}, false, false)) {
-									case "yes" -> {
-										if (Math.random() < ((CPU) players.get(players.indexOf(player) + 1)).hintRate) {
-											System.out.println(embellishMessage(hintEmbellims));
-											System.out.println("success\n\n"); // debug
-										} else {
-											System.out.println(embellishMessage(failedHintEmbellims));
-											System.out.println("fail\n\n"); // debug
-										}
-									}
+						if (player.opponents.get(0) instanceof CPU) { // There is an index ahead AND that next index is a CPU.
+							if (prompt("You have a chance to peek at your opponent's move. Want to try?", "Error: pick yes or no.", new String[]{"yes", "no"}, false, false).equals("yes")) {
+								if (Math.random() < ((CPU) player.opponents.get(0)).hintRate) {
+									player.opponents.get(0).choice = ((CPU) player.opponents.get(0)).archetypedChoice();
 
-									case "no" -> {}
+									if (Math.random() < 0.3)
+										System.out.println(ANSI_CYAN + " ❖ " + embellishMessage(hintEmbellims, "he", player) + "\n" + ANSI_RESET);
+									else
+										System.out.println(ANSI_CYAN + " ❖ " + embellishMessage(archetypeHintEmbellims, "ahe", player) + "\n" + ANSI_RESET);
+								} else {
+									System.out.println(ANSI_CYAN + " ❖ " + embellishMessage(failedHintEmbellims, "fhe", player) + "\n" + ANSI_RESET);
 								}
 							}
-						} catch (Exception ignored) {};
+						}
 
-
-						System.out.println(ANSI_BLUE + "It is now Player " + players.indexOf(player) + "'s turn (Human)." + ANSI_RESET);
 						player.retrieveChoice(players.indexOf(player));
-						System.out.println(ANSI_PURPLE + "P" + players.indexOf(player) + " finished choosing hand.\n\n" + ANSI_RESET);
 					}
+
+					System.out.println(ANSI_PURPLE + "(✓) P" + (players.indexOf(player) + 1) + " finished choosing hand.\n\n" + ANSI_RESET);
 				}
 
+				TimeUnit.MILLISECONDS.sleep(1200); // todo: DEFAULT 1200
+				System.out.println(ANSI_BLUE + "Three...");
 				TimeUnit.MILLISECONDS.sleep(1200);
-				System.out.println("Three...");
+				System.out.println("\t\tTwo...");
 				TimeUnit.MILLISECONDS.sleep(1200);
-				System.out.println("Two...");
+				System.out.println("\t\t\t\tOne...");
 				TimeUnit.MILLISECONDS.sleep(1200);
-				System.out.println("One...");
-				TimeUnit.MILLISECONDS.sleep(1200);
-				System.out.println("BOULDER, BLANKET, BIRD!\n");
+				System.out.println("BOULDER,  BLANKET,  BIRD!\n" + ANSI_RESET);
 
-				System.out.println(embellishMessage(choiceEmbellims, players.get(0).choice));
-				bGame.determineWinner(players.get(0).choice, players.get(1).choice);
+				fancyDelay(500, "The results are in...");
+				Player winner = determineWinner(players.get(0), players.get(1));
 
-				System.out.println(players.get(0).choice + "(A) " + players.get(1).choice + "(B) " + bGame.gameState); // debug line
+				for (int pIndex : playerOrder) {
+					Player player = players.get(pIndex);
 
-				System.out.println(embellishMessage(stateEmbellims, players.get(0).choice));
-
-				for (Player player : players) { // Update individual stats
-					player.updateStats(bGame.gameState);
+					System.out.println(" ♦  " + embellishMessage(choiceEmbellims, "ce", player));
+					//System.out.println(player.choice + "(YOURS) " + player.opponents.get(0).choice + "(OPPO) " + player.gameState); // debug line
+					player.updateStats(player.gameState);
+					TimeUnit.MILLISECONDS.sleep(4000);
 				}
 
+				if (winner == null) { // Tie scenario
+					System.out.println(ANSI_CYAN + "\n ♢ " + embellishMessage(tieEmbellims, "te", players.get(playerOrder[0])) + ANSI_GREEN + " It's a tie!" + ANSI_RESET);
+				}
+				else {
+					System.out.println(ANSI_CYAN + "\n ♢ " + embellishMessage(winEmbellims, "we", players.get(playerOrder[0])) + ANSI_GREEN + " Player " + (players.indexOf(winner) + 1) + " wins!" + ANSI_RESET);
+				}
 				bGame.remainingGames--;
-				System.out.println("Game " + (bGame.totalGames - bGame.remainingGames) + " finished!");
+				System.out.println(ANSI_YELLOW + "Game " + (bGame.totalGames - bGame.remainingGames) + " finished!\n\n\n\n" + ANSI_RESET);
+				TimeUnit.MILLISECONDS.sleep(5000);
 
 			}
 			else {
@@ -156,107 +175,173 @@ public class BrpsGame
 		}
 	}
 
-	public static <T> String embellishMessage(Set<T> embellims, String type) { // Slightly embellish each win message so they're not always the same.
-		return ANSI_YELLOW + "embellishMessage not implemented fixnow okthanks :)" + ANSI_RESET;
+	public static <T extends Tuple> String embellishMessage(Set<T> embellims, String setAbbrev, Player target) { // Slightly embellish each win message so they're not always the same.
+		Set<String> filteredEmbellims = new HashSet<>();
+		assert (setAbbrev.matches("ce|he|fhe|ahe|se|te")) : "Embellim set abbreviation invalid! (" + setAbbrev + ")"; // Note: archetypeHintEmbellims and hintEmbellims are supposed to be COMBINED. Which one is called should be rolled outside of this method.
+
+		switch (setAbbrev) {
+			case "ce", "te" -> { // choiceEmbellims (self choice). "You" or "Your opponent"
+								// tieEmbellim (default to self choice). "Your {CHOICE}" or "Your opponent's {CHOICE}"
+				filteredEmbellims = embellims.stream()
+						.filter(e -> e.getValue(0).equals(target.choice))
+						.map(e -> e.getValue(1).toString())
+						.collect(Collectors.toSet());
+			}
+
+			case "he" -> { // hintEmbellims (oppo choice). "You" or "Your opponent"
+				filteredEmbellims = embellims.stream()
+						.filter(e -> e.getValue(0).equals(target.opponents.get(0).choice))
+						.map(e -> e.getValue(1).toString())
+						.collect(Collectors.toSet());
+			}
+
+			case "fhe" -> { // failedHintEmbellims (generic). "You" or "Your opponent"
+				filteredEmbellims = embellims.stream()
+						.map(e -> e.getValue(0).toString())
+						.collect(Collectors.toSet());
+			}
+
+			case "ahe" -> { // archetypeHintEmbellims (oppo archetype). "You" or "Your opponent"
+				CPU targetOpponent = (CPU)(target.opponents.get(0));
+
+				filteredEmbellims = embellims.stream()
+						.filter(e -> e.getValue(0).equals(targetOpponent.atype))
+						.map(e -> e.getValue(1).toString())
+						.collect(Collectors.toSet());
+			}
+
+			case "we" -> { // winEmbellim (winner's choice). "Your {CHOICE}" or "Your opponent's {CHOICE}"
+				filteredEmbellims = embellims.stream()
+						.filter(e -> e.getValue(0).equals(determineWinner(target, target.opponents.get(0)).choice))
+						.map(e -> e.getValue(1).toString())
+						.collect(Collectors.toSet());
+			}
+		}
+
+		// Possible games...
+		// Human v. CPU: target = you
+		// Human v. human: target = you
+		// CPU v. CPU: target = your computer
+
+		// Huh, ok.
+
+		String selectedEmbellim = filteredEmbellims.stream()
+				.toList()
+				.get((int)(Math.random() * filteredEmbellims.size()));
+
+
+		for (String tsString : getSubstrings(selectedEmbellim, Pattern.compile("\\[.*?]"))) {
+			int targetSensitiveSide = (target.toString().equals("You")) ? 0 : 1; // Target-sensitive = [your opponent|you] part of the embellim.
+			String[] targetSensitiveString = tsString.replace("[", "").replace("]", "").split("\\|"); // Split target-sensitive string into its two halves.
+
+			selectedEmbellim = selectedEmbellim.replaceFirst("\\[.*?]", targetSensitiveString[targetSensitiveSide]); // Apply to embellim string.
+		}
+
+		return target.toString() + " " + selectedEmbellim
+				.replace("{CHOICE}", String.valueOf(target.choice))
+				.replace("{TOPIC}", topics.stream().toList().get((int)(Math.random() * topics.size())).getValue0());
 	}
 
 	public static void populateEmbellims() {
 		// [a|b] denotes [your action | opponent action].  ----- Formatted as "You" + message, or "Your opponent" + message.
-		choiceEmbellims.add(Pair.with(brpsChoices.NONE, "striked forcefully with a {CHOICE}!"));
-		choiceEmbellims.add(Pair.with(brpsChoices.NONE, "brandished a {CHOICE} from out of nowhere!"));
-		choiceEmbellims.add(Pair.with(brpsChoices.NONE, "came out swinging with a {CHOICE}!"));
-		choiceEmbellims.add(Pair.with(brpsChoices.NONE, "unsheathed a tactical {CHOICE}!"));
-		choiceEmbellims.add(Pair.with(brpsChoices.NONE, "pulled out a {CHOICE} from [your|their] pocket!"));
-		choiceEmbellims.add(Pair.with(brpsChoices.NONE, "swiped quickly with a {CHOICE}!"));
-		choiceEmbellims.add(Pair.with(brpsChoices.NONE, "jerked a {CHOICE} forward!"));
-		choiceEmbellims.add(Pair.with(brpsChoices.NONE, "loafed around absentmindedly and pulled out a {CHOICE}!"));
-		choiceEmbellims.add(Pair.with(brpsChoices.NONE, "pretended not to care but suddenly threw a {CHOICE}!"));
-		choiceEmbellims.add(Pair.with(brpsChoices.NONE, "thought wistfully and conjured a {CHOICE}!"));
-		choiceEmbellims.add(Pair.with(brpsChoices.NONE, "chucked a {CHOICE}!"));
-		choiceEmbellims.add(Pair.with(brpsChoices.NONE, "came barreling forward with a {CHOICE} in hand!"));
-		choiceEmbellims.add(Pair.with(brpsChoices.NONE, "whispered something inaudible and out came a {CHOICE}!"));
-		choiceEmbellims.add(Pair.with(brpsChoices.NONE, "told [the opponent|you] about something interesting and presented a {CHOICE}!"));
-		choiceEmbellims.add(Pair.with(brpsChoices.NONE, "closed [your|their] eyes and unearthed a {CHOICE}!"));
-		choiceEmbellims.add(Pair.with(brpsChoices.NONE, "wished for a {CHOICE} and it came true!"));
-		choiceEmbellims.add(Pair.with(brpsChoices.NONE, "found the nearest {CHOICE} and flinged it!"));
-		choiceEmbellims.add(Pair.with(brpsChoices.NONE, "ordered a {CHOICE} as soon as possible!"));
-		choiceEmbellims.add(Pair.with(brpsChoices.NONE, "boldly wielded a {CHOICE}!"));
-		choiceEmbellims.add(Pair.with(brpsChoices.NONE, "feigned ignorance and used a surprise {CHOICE} attack!"));
-		choiceEmbellims.add(Pair.with(brpsChoices.NONE, "bashed [the opponent|you] with a {CHOICE}!"));
-		choiceEmbellims.add(Pair.with(brpsChoices.NONE, "just missed with a {CHOICE} but tried again!"));
-		choiceEmbellims.add(Pair.with(brpsChoices.NONE, "surprised [the opponent|you] with a {CHOICE}!"));
-		choiceEmbellims.add(Pair.with(brpsChoices.NONE, "tried a {CHOICE}!"));
-		choiceEmbellims.add(Pair.with(brpsChoices.NONE, "told a funny joke about {CHOICE}s!"));
-		choiceEmbellims.add(Pair.with(brpsChoices.NONE, "drew out a {CHOICE} and made a witty remark!"));
-		choiceEmbellims.add(Pair.with(brpsChoices.NONE, "stylishly swept up a {CHOICE}!"));
-		choiceEmbellims.add(Pair.with(brpsChoices.NONE, "tactfully grabbed a {CHOICE}!"));
 
-		choiceEmbellims.add(Pair.with(brpsChoices.BOULDER, "excavated a boulder!"));
-		choiceEmbellims.add(Pair.with(brpsChoices.BOULDER, "slammed a boulder onto the ground!"));
-		choiceEmbellims.add(Pair.with(brpsChoices.BOULDER, "hauled a boulder over!"));
-		choiceEmbellims.add(Pair.with(brpsChoices.BOULDER, "rolled a boulder in and made a big mess of dust!"));
-		choiceEmbellims.add(Pair.with(brpsChoices.BOULDER, "busied [yourself|themselves] with a boulder!"));
-		choiceEmbellims.add(Pair.with(brpsChoices.BOULDER, "bowled a first-try strike using a boulder!"));
+		// choiceEmbellims = selfChoice
+		choiceEmbellims.add(Pair.with(choices.NONE, "striked forcefully with a {CHOICE}!"));
+		choiceEmbellims.add(Pair.with(choices.NONE, "brandished a {CHOICE} from out of nowhere!"));
+		choiceEmbellims.add(Pair.with(choices.NONE, "came out swinging with a {CHOICE}!"));
+		choiceEmbellims.add(Pair.with(choices.NONE, "unsheathed a tactical {CHOICE}!"));
+		choiceEmbellims.add(Pair.with(choices.NONE, "pulled out a {CHOICE} from [your|their] pocket!"));
+		choiceEmbellims.add(Pair.with(choices.NONE, "swiped quickly with a {CHOICE}!"));
+		choiceEmbellims.add(Pair.with(choices.NONE, "jerked a {CHOICE} forward!"));
+		choiceEmbellims.add(Pair.with(choices.NONE, "loafed around absentmindedly and pulled out a {CHOICE}!"));
+		choiceEmbellims.add(Pair.with(choices.NONE, "pretended not to care but suddenly threw a {CHOICE}!"));
+		choiceEmbellims.add(Pair.with(choices.NONE, "thought wistfully and conjured a {CHOICE}!"));
+		choiceEmbellims.add(Pair.with(choices.NONE, "chucked a {CHOICE}!"));
+		choiceEmbellims.add(Pair.with(choices.NONE, "came barreling forward with a {CHOICE} in hand!"));
+		choiceEmbellims.add(Pair.with(choices.NONE, "whispered something inaudible and out came a {CHOICE}!"));
+		choiceEmbellims.add(Pair.with(choices.NONE, "told [the opponent|you] about something interesting and presented a {CHOICE}!"));
+		choiceEmbellims.add(Pair.with(choices.NONE, "closed [your|their] eyes and unearthed a {CHOICE}!"));
+		choiceEmbellims.add(Pair.with(choices.NONE, "wished for a {CHOICE} and it came true!"));
+		choiceEmbellims.add(Pair.with(choices.NONE, "found the nearest {CHOICE} and flinged it!"));
+		choiceEmbellims.add(Pair.with(choices.NONE, "ordered a {CHOICE} as soon as possible!"));
+		choiceEmbellims.add(Pair.with(choices.NONE, "boldly wielded a {CHOICE}!"));
+		choiceEmbellims.add(Pair.with(choices.NONE, "feigned ignorance and used a surprise {CHOICE} attack!"));
+		choiceEmbellims.add(Pair.with(choices.NONE, "bashed [the opponent|you] with a {CHOICE}!"));
+		choiceEmbellims.add(Pair.with(choices.NONE, "just missed with a {CHOICE} but tried again!"));
+		choiceEmbellims.add(Pair.with(choices.NONE, "surprised [the opponent|you] with a {CHOICE}!"));
+		choiceEmbellims.add(Pair.with(choices.NONE, "tried a {CHOICE}!"));
+		choiceEmbellims.add(Pair.with(choices.NONE, "told a funny joke about {CHOICE}s!"));
+		choiceEmbellims.add(Pair.with(choices.NONE, "drew out a {CHOICE} and made a witty remark!"));
+		choiceEmbellims.add(Pair.with(choices.NONE, "stylishly swept up a {CHOICE}!"));
+		choiceEmbellims.add(Pair.with(choices.NONE, "tactfully grabbed a {CHOICE}!"));
 
-		choiceEmbellims.add(Pair.with(brpsChoices.BLANKET, "threw a million blankets into the air Gatsby-style!"));
-		choiceEmbellims.add(Pair.with(brpsChoices.BLANKET, "warmed [yourself|themselves] with a blanket!"));
-		choiceEmbellims.add(Pair.with(brpsChoices.BLANKET, "took a blanket from your bed!"));
-		choiceEmbellims.add(Pair.with(brpsChoices.BLANKET, "cleaned off the table with a blanket!"));
-		choiceEmbellims.add(Pair.with(brpsChoices.BLANKET, "took a nap and unfurled a blanket!"));
-		choiceEmbellims.add(Pair.with(brpsChoices.BLANKET, "unrolled a blanket and made a big mess of lint!"));
+		choiceEmbellims.add(Pair.with(choices.BOULDER, "excavated a boulder!"));
+		choiceEmbellims.add(Pair.with(choices.BOULDER, "slammed a boulder onto the ground!"));
+		choiceEmbellims.add(Pair.with(choices.BOULDER, "hauled a boulder over!"));
+		choiceEmbellims.add(Pair.with(choices.BOULDER, "rolled a boulder in and made a big mess of dust!"));
+		choiceEmbellims.add(Pair.with(choices.BOULDER, "busied [yourself|themselves] with a boulder!"));
+		choiceEmbellims.add(Pair.with(choices.BOULDER, "bowled a first-try strike using a boulder!"));
 
-		choiceEmbellims.add(Pair.with(brpsChoices.BIRD, "plucked a random bird from out of the sky!"));
-		choiceEmbellims.add(Pair.with(brpsChoices.BIRD, "revealed, out of a pile of feathers, a bird!"));
-		choiceEmbellims.add(Pair.with(brpsChoices.BIRD, "squawked ferociously with a bird!"));
-		choiceEmbellims.add(Pair.with(brpsChoices.BIRD, "flew into the air on a bird!"));
-		choiceEmbellims.add(Pair.with(brpsChoices.BIRD, "happily presented a bird and made a big mess of feathers everywhere!"));
+		choiceEmbellims.add(Pair.with(choices.BLANKET, "threw a million blankets into the air Gatsby-style!"));
+		choiceEmbellims.add(Pair.with(choices.BLANKET, "warmed [yourself|themselves] with a blanket!"));
+		choiceEmbellims.add(Pair.with(choices.BLANKET, "took a random blanket from [your|their] bed!"));
+		choiceEmbellims.add(Pair.with(choices.BLANKET, "cleaned off the table with a blanket!"));
+		choiceEmbellims.add(Pair.with(choices.BLANKET, "took a nap and unfurled a blanket!"));
+		choiceEmbellims.add(Pair.with(choices.BLANKET, "unrolled a blanket and made a big mess of lint!"));
+
+		choiceEmbellims.add(Pair.with(choices.BIRD, "plucked a random bird from out of the sky!"));
+		choiceEmbellims.add(Pair.with(choices.BIRD, "revealed, out of a pile of feathers, a bird!"));
+		choiceEmbellims.add(Pair.with(choices.BIRD, "squawked ferociously with a bird!"));
+		choiceEmbellims.add(Pair.with(choices.BIRD, "flew into the air on a bird!"));
+		choiceEmbellims.add(Pair.with(choices.BIRD, "happily presented a tiny bird and made a big mess of feathers everywhere!"));
 
 
 
-
+		// hintEmbellims = oppoChoice
 		// Note: these generic hint embellims basically guarantee a free win. They will not occur often though.
-		hintEmbellims.add(Pair.with(brpsChoices.NONE, "peeked and saw [your opponent|you] hiding a {CHOICE}!"));
-		hintEmbellims.add(Pair.with(brpsChoices.NONE, "talked about {CHOICE}s and [your opponent|you] suddenly got nervous!"));
-		hintEmbellims.add(Pair.with(brpsChoices.NONE, "did a little spin and saw [your opponent|you] flash a {CHOICE} before applauding!"));
-		hintEmbellims.add(Pair.with(brpsChoices.NONE, "tricked [your opponent|you] into revealing {their|your} {CHOICE}!"));
-		hintEmbellims.add(Pair.with(brpsChoices.NONE, "saw the faint shadow of a {CHOICE} on the ground!"));
+		hintEmbellims.add(Pair.with(choices.NONE, "peeked and saw [your opponent|you] hiding a {CHOICE}!"));
+		hintEmbellims.add(Pair.with(choices.NONE, "talked about {CHOICE}s and [your opponent|you] suddenly got nervous!"));
+		hintEmbellims.add(Pair.with(choices.NONE, "did a little spin and saw [your opponent|you] flash a {CHOICE} before applauding!"));
+		hintEmbellims.add(Pair.with(choices.NONE, "tricked [your opponent|you] into revealing [their|your] {CHOICE}!"));
+		hintEmbellims.add(Pair.with(choices.NONE, "saw the faint shadow of a {CHOICE} on the ground!"));
 
-		hintEmbellims.add(Pair.with(brpsChoices.BOULDER, "overheard [your opponent|you] whispering about the beach!"));
-		hintEmbellims.add(Pair.with(brpsChoices.BOULDER, "peeked and saw [your opponent|you] firmly gripping [their|your] hand."));
-		hintEmbellims.add(Pair.with(brpsChoices.BOULDER, "saw [your opponent|you] sitting with an unusually furrowed brow!"));
-		hintEmbellims.add(Pair.with(brpsChoices.BOULDER, "overheard [your opponent|you] mumbling 'That rocks!' many times!"));
+		hintEmbellims.add(Pair.with(choices.BOULDER, "overheard [your opponent|you] whispering about the beach!"));
+		hintEmbellims.add(Pair.with(choices.BOULDER, "peeked and saw [your opponent|you] firmly gripping [their|your] hand."));
+		hintEmbellims.add(Pair.with(choices.BOULDER, "saw [your opponent|you] sitting with an unusually furrowed brow!"));
+		hintEmbellims.add(Pair.with(choices.BOULDER, "overheard [your opponent|you] mumbling 'That rocks!' many times!"));
 
-		hintEmbellims.add(Pair.with(brpsChoices.BLANKET, "looked at [your opponent|you] and [they|you] seemed unusually drowsy."));
-		hintEmbellims.add(Pair.with(brpsChoices.BLANKET, "peeked and saw [your opponent|you] with very relaxed fingers!"));
-		hintEmbellims.add(Pair.with(brpsChoices.BLANKET, "overheard [your opponent|you] thinking out loud about the weekend."));
-		hintEmbellims.add(Pair.with(brpsChoices.BLANKET, "glanced over and saw [your opponent|you] holding a calm expression."));
+		hintEmbellims.add(Pair.with(choices.BLANKET, "looked at [your opponent|you] and [they|you] seemed unusually drowsy."));
+		hintEmbellims.add(Pair.with(choices.BLANKET, "peeked and saw [your opponent|you] with very relaxed fingers!"));
+		hintEmbellims.add(Pair.with(choices.BLANKET, "overheard [your opponent|you] thinking out loud about the weekend."));
+		hintEmbellims.add(Pair.with(choices.BLANKET, "glanced over and saw [your opponent|you] holding a calm expression."));
 
-		hintEmbellims.add(Pair.with(brpsChoices.BIRD, "tried to peek over and saw [your opponent|you] preparing a somewhat firm gesture."));
-		hintEmbellims.add(Pair.with(brpsChoices.BIRD, "asked about lunch and [your opponent|you] seemed to favor fried chicken."));
-		hintEmbellims.add(Pair.with(brpsChoices.BIRD, "saw [your opponent|you] sitting with a gentle grin and in deep thought!"));
-		hintEmbellims.add(Pair.with(brpsChoices.BIRD, "overheard [your opponent|you] suddenly peep like a chicken and both laughed."));
+		hintEmbellims.add(Pair.with(choices.BIRD, "tried to peek over and saw [your opponent|you] preparing a somewhat firm gesture."));
+		hintEmbellims.add(Pair.with(choices.BIRD, "asked about lunch and [your opponent|you] seemed to favor fried chicken."));
+		hintEmbellims.add(Pair.with(choices.BIRD, "saw [your opponent|you] sitting with a gentle grin and in deep thought!"));
+		hintEmbellims.add(Pair.with(choices.BIRD, "overheard [your opponent|you] suddenly peep like a chicken and both laughed."));
 
 
 
-		// Failed hint embellims are all generic.
-		failedHintEmbellims.add("tried to glance over [your opponent's|your] shoulder but failed!");
-		failedHintEmbellims.add("panicked and talked about the weather instead and nervously laughed.");
-		failedHintEmbellims.add("forgot what [you|they] were doing and thought about {TOPIC}.");
-		failedHintEmbellims.add("peeked over [your opponent's|your] shoulder but was met with a stern glare!");
-		failedHintEmbellims.add("absentmindedly dozed off for just a moment.");
-		failedHintEmbellims.add("[were|was] too nervous to say anything.");
-		failedHintEmbellims.add("tried to get a hint but decided to talk about {TOPIC} instead.");
-		failedHintEmbellims.add("[were|was] too preoccupied with the drizzle outside to ask something.");
-		failedHintEmbellims.add("shifted around and attempted to say something, but it got stuck on the tip of [your|their] tongue.");
-		failedHintEmbellims.add("loafed around instead!");
-		failedHintEmbellims.add("stubbornly decided to not try for a hint.");
+		// Failed hint embellims = generic.
+		failedHintEmbellims.add(Unit.with("tried to glance over [your opponent's|your] shoulder but failed!"));
+		failedHintEmbellims.add(Unit.with("panicked and talked about the weather instead and nervously laughed."));
+		failedHintEmbellims.add(Unit.with("forgot what [you|they] were doing and thought about {TOPIC}."));
+		failedHintEmbellims.add(Unit.with("peeked over [your opponent's|your] shoulder but was met with a stern glare!"));
+		failedHintEmbellims.add(Unit.with("absentmindedly dozed off for just a moment."));
+		failedHintEmbellims.add(Unit.with("[were|was] too nervous to say anything."));
+		failedHintEmbellims.add(Unit.with("tried to get a hint but decided to talk about {TOPIC} instead."));
+		failedHintEmbellims.add(Unit.with("[were|was] too preoccupied with the drizzle outside to ask something."));
+		failedHintEmbellims.add(Unit.with("shifted around and attempted to say something, but it got stuck on the tip of [your|their] tongue."));
+		failedHintEmbellims.add(Unit.with("loafed around instead!"));
+		failedHintEmbellims.add(Unit.with("stubbornly decided to not try for a hint."));
 
-		// ...except for archetypes. These are special hints (and hint fails!) that hint at the archetype of the CPU. And big ol' tip: many of these are tricky -- they line up with choice hints but can be misleading!
+		// ArchetypeHintEmbellims = oppoArchetype
+		// These are special hints (and hint fails!) that hint at the archetype of the CPU. And big ol' tip: many of these are tricky -- they line up with choice hints but can be misleading!
 		// Note I: archetypeHints can be called by CPUs, too (in a CPU v. CPU case)! They will then "intelligently" adapt their weights accordingly (of course, not 100% of the time -- there is a chance they won't understand the hint).
 		// Note II: there are no archetypeFailHintEmbellims b/c that would give away the archetypes! These embellims below already kind of do that. Plus, I don't want to write more hints :)
 
 		archetypeHintEmbellims.add(Pair.with(CPU.archetype.NONE, "attempted to look for any clues from [your opponent|their opponent] but were surprised to see nothing of note.")); // Yes, even none archetype has hints -- still an archetype!
-		archetypeHintEmbellims.add(Pair.with(CPU.archetype.NONE, "asked many questions but were disappointed to find out[your opponent|their opponent] was simply quite ordinary."));
+		archetypeHintEmbellims.add(Pair.with(CPU.archetype.NONE, "asked many questions but was disappointed to find out [your opponent|their opponent] was simply quite ordinary."));
 		archetypeHintEmbellims.add(Pair.with(CPU.archetype.NONE, "probed [your opponent|their opponent] for their interests and finally asked them out for lunch, and they simply happily agreed."));
 
 		archetypeHintEmbellims.add(Pair.with(CPU.archetype.SEAGULL, "asked about the beach and [your opponent|their opponent] responded with a passionate, joyful response!"));
@@ -296,43 +381,97 @@ public class BrpsGame
 		archetypeHintEmbellims.add(Pair.with(CPU.archetype.GRANDMASTER, "thought for a split second that [your opponent|their opponent] looked familiar, but brushed the thought aside.")); // e.g. famous RPS player, seen on the interwebs!
 
 
+		// stateEmbellim = winner's choice
 		// stateEmbellim = P1's winning choice. ----  Formatted as "Your {CHOICE}" + message!
-		stateEmbellims.add(Pair.with(brpsChoices.BOULDER, "took down [the opponent's|your] bird in a single blow!"));
-		stateEmbellims.add(Pair.with(brpsChoices.BOULDER, "crushed the bird in a split second!"));
-		stateEmbellims.add(Pair.with(brpsChoices.BOULDER, "rolled around and somehow ended up with a pile of feathers!"));
-		stateEmbellims.add(Pair.with(brpsChoices.BOULDER, "was pecked by the opposing bird, and pecked right back!"));
-		stateEmbellims.add(Pair.with(brpsChoices.BOULDER, "invited the opposing bird for a party and goofed off! (The boulder emerged victorious.)"));
-		stateEmbellims.add(Pair.with(brpsChoices.BOULDER, "lectured the opposing bird on the dangers of geology and it flew off immediately!"));
-		stateEmbellims.add(Pair.with(brpsChoices.BOULDER, "grabbed a handful of worms and tricked the opposing bird!"));
-		stateEmbellims.add(Pair.with(brpsChoices.BOULDER, "bowled over the opposing bird. Strike!"));
-		stateEmbellims.add(Pair.with(brpsChoices.BOULDER, "made the ground tremble and quake. The bird was shaken to its core!"));
-		stateEmbellims.add(Pair.with(brpsChoices.BOULDER, "lovingly made the opposing bird an earthworm sandwich. The bird yielded!"));
-		stateEmbellims.add(Pair.with(brpsChoices.BOULDER, "did nothing... and the opposing bird was crushed by sheer boredom!"));
+		winEmbellims.add(Pair.with(choices.BOULDER, "took down [the opponent's|your] bird in a single blow!"));
+		winEmbellims.add(Pair.with(choices.BOULDER, "crushed the bird in a split second!"));
+		winEmbellims.add(Pair.with(choices.BOULDER, "rolled around and somehow ended up with a pile of feathers!"));
+		winEmbellims.add(Pair.with(choices.BOULDER, "was pecked by the opposing bird, and pecked right back!"));
+		winEmbellims.add(Pair.with(choices.BOULDER, "invited the opposing bird for a party and goofed off! (The boulder emerged victorious.)"));
+		winEmbellims.add(Pair.with(choices.BOULDER, "lectured the opposing bird on the dangers of geology and it flew off immediately!"));
+		winEmbellims.add(Pair.with(choices.BOULDER, "grabbed a handful of worms and tricked the opposing bird!"));
+		winEmbellims.add(Pair.with(choices.BOULDER, "bowled over the opposing bird. Strike!"));
+		winEmbellims.add(Pair.with(choices.BOULDER, "made the ground tremble and quake. The bird was shaken to its core!"));
+		winEmbellims.add(Pair.with(choices.BOULDER, "lovingly made the opposing bird an earthworm sandwich. The bird yielded!"));
+		winEmbellims.add(Pair.with(choices.BOULDER, "did nothing... and the opposing bird was crushed by sheer boredom!"));
 
-		stateEmbellims.add(Pair.with(brpsChoices.BLANKET, "covered the boulder in a veil of crushing darkness!"));
-		stateEmbellims.add(Pair.with(brpsChoices.BLANKET, "whispered something aggressively. The opposing boulder didn't have the guts and promptly rolled off!"));
-		stateEmbellims.add(Pair.with(brpsChoices.BLANKET, "feigned sleep and struck back at the perfect opportunity!"));
-		stateEmbellims.add(Pair.with(brpsChoices.BLANKET, "lied flat on the ground and made the opposing boulder slip!"));
-		stateEmbellims.add(Pair.with(brpsChoices.BLANKET, "made the opposing boulder fall asleep!"));
-		stateEmbellims.add(Pair.with(brpsChoices.BLANKET, "folded itself into a blade and split the boulder!"));
-		stateEmbellims.add(Pair.with(brpsChoices.BLANKET, "fell into a deep sleep and destroyed the boulder in its dream."));
-		stateEmbellims.add(Pair.with(brpsChoices.BLANKET, "recited one of George Orwell's hyper-dystopian novels and bewildered the boulder!"));
-		stateEmbellims.add(Pair.with(brpsChoices.BLANKET, "scared the boulder off with an aggressive tax report!"));
-		stateEmbellims.add(Pair.with(brpsChoices.BLANKET, "made something spin around! The boulder was mightily impressed."));
-		stateEmbellims.add(Pair.with(brpsChoices.BLANKET, "flattened the opposing boulder into a new-age hippie rug."));
+		winEmbellims.add(Pair.with(choices.BLANKET, "covered the boulder in a veil of crushing darkness!"));
+		winEmbellims.add(Pair.with(choices.BLANKET, "whispered something aggressively. The opposing boulder didn't have the guts and promptly rolled off!"));
+		winEmbellims.add(Pair.with(choices.BLANKET, "feigned sleep and struck back at the perfect opportunity!"));
+		winEmbellims.add(Pair.with(choices.BLANKET, "lied flat on the ground and made the opposing boulder slip!"));
+		winEmbellims.add(Pair.with(choices.BLANKET, "made the opposing boulder fall asleep!"));
+		winEmbellims.add(Pair.with(choices.BLANKET, "folded itself into a blade and split the boulder!"));
+		winEmbellims.add(Pair.with(choices.BLANKET, "fell into a deep sleep and destroyed the boulder in its dream."));
+		winEmbellims.add(Pair.with(choices.BLANKET, "recited one of George Orwell's hyper-dystopian novels and bewildered the boulder!"));
+		winEmbellims.add(Pair.with(choices.BLANKET, "scared the boulder off with an aggressive tax report!"));
+		winEmbellims.add(Pair.with(choices.BLANKET, "made something spin around! The boulder was mightily impressed."));
+		winEmbellims.add(Pair.with(choices.BLANKET, "flattened the opposing boulder into a new-age hippie rug."));
 
-		stateEmbellims.add(Pair.with(brpsChoices.BIRD, "called for help! A flock of geese rumbled by and teared through the blanket."));
-		stateEmbellims.add(Pair.with(brpsChoices.BIRD, "squawked something mean! The opposing blanket was reduced to tears."));
-		stateEmbellims.add(Pair.with(brpsChoices.BIRD, "drilled a bunch of scathing holes into the opposing blanket!"));
-		stateEmbellims.add(Pair.with(brpsChoices.BIRD, "publicly humiliated the blanket on the Internet."));
-		stateEmbellims.add(Pair.with(brpsChoices.BIRD, "flew around and pecked at the opposing blanket."));
-		stateEmbellims.add(Pair.with(brpsChoices.BIRD, "used a little pocket magic. Presto! The blanket magically became a pile of birdseed."));
-		stateEmbellims.add(Pair.with(brpsChoices.BIRD, "called its mother for some advice. The blanket passed out from sheer surprise!"));
-		stateEmbellims.add(Pair.with(brpsChoices.BIRD, "ordered a hot slice from Mach Pizza and the blanket died from jealousy!"));
-		stateEmbellims.add(Pair.with(brpsChoices.BIRD, "ruffled its wings and spread a bunch of feathers onto the unfortuante opposing blanket!"));
-		stateEmbellims.add(Pair.with(brpsChoices.BIRD, "sang a beautiful melody and lulled the blanket to sleep."));
-		stateEmbellims.add(Pair.with(brpsChoices.BIRD, "flapped its wings, screeched, and scratched with sharp claws!"));
-		stateEmbellims.add(Pair.with(brpsChoices.BIRD, "endearingly gifted the blanket some soft feathers. It was mightily impressed!"));
+		winEmbellims.add(Pair.with(choices.BIRD, "called for help! A flock of geese rumbled by and tore through the blanket."));
+		winEmbellims.add(Pair.with(choices.BIRD, "squawked something mean! The opposing blanket was reduced to tears."));
+		winEmbellims.add(Pair.with(choices.BIRD, "drilled a bunch of scathing holes into the opposing blanket!"));
+		winEmbellims.add(Pair.with(choices.BIRD, "publicly humiliated the blanket on the Internet."));
+		winEmbellims.add(Pair.with(choices.BIRD, "flew around and pecked at the opposing blanket."));
+		winEmbellims.add(Pair.with(choices.BIRD, "used a little pocket magic. Presto! The blanket magically became a pile of birdseed."));
+		winEmbellims.add(Pair.with(choices.BIRD, "called its mother for some advice. The blanket passed out from sheer surprise!"));
+		winEmbellims.add(Pair.with(choices.BIRD, "ordered a hot slice from Mach Pizza and the blanket died from jealousy!"));
+		winEmbellims.add(Pair.with(choices.BIRD, "ruffled its wings and spread a bunch of feathers onto the unfortuante opposing blanket!"));
+		winEmbellims.add(Pair.with(choices.BIRD, "sang a beautiful melody and lulled the blanket to sleep."));
+		winEmbellims.add(Pair.with(choices.BIRD, "flapped its wings, screeched, and scratched with sharp claws!"));
+		winEmbellims.add(Pair.with(choices.BIRD, "endearingly gifted the blanket some soft feathers. It was mightily impressed!"));
+
+
+		// Reverse psych embellims = self choice
+
+
+
+		// Tie embellims = self choice?
+		tieEmbellims.add(Pair.with(choices.BIRD, "and [your opponent's|your] bird crashed right into each other!"));
+		tieEmbellims.add(Pair.with(choices.BIRD, "tapped [the opponent's|your] bird lightly and it lovingly tapped right back! Awww."));
+		tieEmbellims.add(Pair.with(choices.BIRD, "flew into the other bird. Both flustered, they apologized profusely to each other!"));
+		tieEmbellims.add(Pair.with(choices.BIRD, "whispered to the other bird, grinned, and both flew together off into the joyous, radiant sunset."));
+		tieEmbellims.add(Pair.with(choices.BIRD, "invited [the opponent's|your] bird to a cracker party. Friendship!"));
+		tieEmbellims.add(Pair.with(choices.BIRD, "aimed right at the opposing bird... and narrowly missed!"));
+		tieEmbellims.add(Pair.with(choices.BIRD, "*BOTH BIRDS* bellowed a scathing war cry... just missed!"));
+
+		tieEmbellims.add(Pair.with(choices.BOULDER, "*BOTH BOULDERS* tumbled into each other and shattered into a showering of rocks!"));
+		tieEmbellims.add(Pair.with(choices.BOULDER, "and [the opponent's|your] boulder decided to become one with the earth and stopped rolling."));
+		tieEmbellims.add(Pair.with(choices.BOULDER, "took the opposing boulder out to the local bowling alley for a ten-pin showdown!"));
+		tieEmbellims.add(Pair.with(choices.BOULDER, "and [the opponent's|your] boulder charged forward and they rolled right past!"));
+		tieEmbellims.add(Pair.with(choices.BOULDER, "found the other boulder and opted for the prosperity of unequivocal peace over violence."));
+		tieEmbellims.add(Pair.with(choices.BOULDER, "*BOTH BOULDERS* tumbled forward but accidentally rolled into the '90s! Totally tubular, my dude."));
+
+		tieEmbellims.add(Pair.with(choices.BLANKET, "and the opposing blanket snugly drifted right into bed and took a nap!"));
+		tieEmbellims.add(Pair.with(choices.BLANKET, "openly expressed its concerns over today's socioeconomic woes to the other and loftly made peace."));
+		tieEmbellims.add(Pair.with(choices.BLANKET, "*BOTH BLANKETS* did a lil' Irish jig. Thunderous applause!!"));
+		tieEmbellims.add(Pair.with(choices.BLANKET, "blanketed the opposing blanket. Absolutely riveting."));
+		tieEmbellims.add(Pair.with(choices.BLANKET, "noticed the incoming blanket and humbly apologized for the misunderstanding. They then lived out their hearty lives forever friends. Aww."));
+		tieEmbellims.add(Pair.with(choices.BLANKET, "tried to strike at [the opponent's|your] blanket, but the wind promptly swept it over yonder!"));
+
+
+		// Topics
+		topics.add(Unit.with("the weekend"));
+		topics.add(Unit.with("the weather"));
+		topics.add(Unit.with("dinner"));
+		topics.add(Unit.with("colors"));
+		topics.add(Unit.with("vehicles"));
+		topics.add(Unit.with("strategy games"));
+		topics.add(Unit.with("something random"));
+		topics.add(Unit.with("what time it was"));
+		topics.add(Unit.with("garlic bread"));
+		topics.add(Unit.with("whether or not pineapple goes on pizza"));
+		topics.add(Unit.with("politics"));
+		topics.add(Unit.with("nothing in particular"));
+		topics.add(Unit.with("winter break"));
+		topics.add(Unit.with("today's society's sociopolitical disorder"));
+		topics.add(Unit.with("the future of mankind"));
+		topics.add(Unit.with("the significance of time"));
+		topics.add(Unit.with("a video game you liked in your childhood"));
+		topics.add(Unit.with("flowers"));
+		topics.add(Unit.with("the nugget-shaped cloud you saw yesterday"));
+		topics.add(Unit.with("your favorite food"));
+		topics.add(Unit.with("a story you'd been wanting to write"));
+		topics.add(Unit.with("the wonders of the world"));
 	}
 
 	public static int[] determineOrder(List<Player> players) {
@@ -343,22 +482,23 @@ public class BrpsGame
 			order[i] = initialIndex + i > players.size() - 1 ? 0 : initialIndex + i; // Wrap index to 0 if it's beyond list length (e.g. list = 3, so index of 3 should wrap to 0)
 		}
 
-		System.out.println(ANSI_YELLOW + "Player order is " + grammaticParse(order, "then") + ".\n\n\n" + ANSI_RESET);
+		System.out.println(ANSI_YELLOW + "(+) Player order is " + grammaticParse(Arrays.stream(order).map(o -> o + 1).map(o -> "P" + o).toArray(), "then") + ".\n\n\n" + ANSI_RESET);
 
 		return ArrayUtils.toPrimitive(order);
 	}
 
-	public void determineWinner(brpsChoices primaryChoice, brpsChoices comparedChoice) {
-		if (primaryChoice.equals(comparedChoice)) {// Eliminate tie scenario
-			gameState = brpsStates.TIE;
-			return;
+	public static Player determineWinner(Player playerA, Player playerB) {
+		if (playerA.choice.equals(playerB.choice)) {// Eliminate tie scenario
+			playerA.gameState = gameStates.TIE;
+			playerB.gameState = gameStates.TIE;
+			return null;
 		}
 
-		if (primaryChoice.ordinal() == 0 || comparedChoice.ordinal() == 0) {
-			gameState = brpsStates.INVALID;
-			return;
+		if (playerA.choice.ordinal() == 0 || playerB.choice.ordinal() == 0) {
+			playerA.gameState = gameStates.INVALID;
+			playerB.gameState = gameStates.INVALID;
+			return null;
 		}
-
 		/* Boolean operators version */
 		// boulder 1 blanket 2 bird 3
 		// 3 2, 3 1, 2 1, 2 3, 1 2, 1 3
@@ -366,11 +506,16 @@ public class BrpsGame
 		// win, lose, win, lose, lose, WIN (outlier)
 		// win = 1, -2 **** lose = -1, 2
 
-		if (primaryChoice.ordinal() - comparedChoice.ordinal() == 1 || primaryChoice.ordinal() - comparedChoice.ordinal() == -2) {
-			gameState = brpsStates.WIN;
+		if (playerA.choice.ordinal() - playerB.choice.ordinal() == 1 || playerA.choice.ordinal() - playerB.choice.ordinal() == -2) {
+			playerA.gameState = gameStates.WIN;
+			playerB.gameState = gameStates.LOSE;
+			return playerA;
 		}
-		else
-			gameState = brpsStates.LOSE;
+		else {
+			playerA.gameState = gameStates.LOSE;
+			playerB.gameState = gameStates.WIN;
+			return playerB;
+		}
 	}
 
 
@@ -445,9 +590,9 @@ public class BrpsGame
 		}
 	}
 
-	public static void fancyDelay(long delay) throws InterruptedException { // Yoinked from SchudawgCannoneer
+	public static void fancyDelay(long delay, String message) throws InterruptedException { // Yoinked from SchudawgCannoneer
 		int recursionCount = 0;
-		System.out.print(ANSI_CYAN + "Thinking... /");
+		System.out.print(ANSI_CYAN + message + " /");
 
 		while (recursionCount < 2) {
 			TimeUnit.MILLISECONDS.sleep(delay);
@@ -460,7 +605,7 @@ public class BrpsGame
 			System.out.print("\b/");
 			recursionCount++;
 		}
-		System.out.print("\b\nDone!" + ANSI_RESET);
+		System.out.print("\b\nDone!\n" + ANSI_RESET);
 	}
 
 	public static <T> List<T> reorderList(List<T> unorderedList, int[] order) { // <+> APM
@@ -490,6 +635,34 @@ public class BrpsGame
 		}
 
 		return newArray;
+	}
+
+
+
+
+	public static int numOfStringContent(String string, Pattern pattern) { // <+> APM
+		int count = 0;
+		Matcher matcher = pattern.matcher(string);
+
+		while (matcher.find()) {
+			count++;
+		}
+
+		return count;
+	}
+
+	public static String[] getSubstrings(String string, Pattern pattern) { // <+> APM
+		List<String> substrings = new ArrayList<>();
+		String editedString = string;
+		Matcher matcher = pattern.matcher(editedString);
+
+		for (int i = 0; i < numOfStringContent(string, pattern); i++) {
+			matcher.find();
+			substrings.add(matcher.group(0));
+			editedString = editedString.replaceFirst(String.valueOf(pattern), "");
+		}
+
+		return substrings.toArray(new String[0]);
 	}
 }
 

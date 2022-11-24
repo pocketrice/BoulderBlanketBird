@@ -1,7 +1,7 @@
 import java.time.LocalDateTime;
 import java.util.Arrays;
+import java.util.Collection;
 import java.util.List;
-import java.util.stream.Collectors;
 import java.util.stream.DoubleStream;
 
 
@@ -27,7 +27,6 @@ public class CPU extends Player {
 
     archetype atype;
     double hintRate; // 0.0 - 1.0. Higher = more hints (bad for winning)
-    List<Player> opponents;
 
 
     // Wikian-only attributes
@@ -39,12 +38,6 @@ public class CPU extends Player {
         atype = weightedRandom(archetype.values(), new double[]{0.3, 0.08, 0.08, 0.08, 0.1, 0.09, 0.1, 0.05, 0.1, 0.02}, false);
         hintRate = proximityRandom(atype.hRate, 0.1, 0.05);
         turnsSinceReroll = 0;
-
-        opponents = players
-                .stream()
-                .filter(p -> !p.equals(this))
-                .collect(Collectors.toList());
-
 
         if (atype.name().equals("WIKIAN")) { // Wikian archetype
             hasWikianStrategiesRolled = false;
@@ -60,13 +53,6 @@ public class CPU extends Player {
         else
             hintRate = proximityRandom(hR, 0.1, 0.05);
 
-        opponents = players
-                .stream()
-                .filter(p -> !p.equals(this))
-                .collect(Collectors.toList());
-
-
-
         if (atype.name().equals("WIKIAN")) { // Wikian archetype
             hasWikianStrategiesRolled = false;
             wikianRerollChance = 0;
@@ -74,7 +60,7 @@ public class CPU extends Player {
 
     }
 
-    public brpsChoices archetypedChoice() { // todo: custom messages for each archetype! Hints at the CPU's archetype and adds some flair (e.g. "Your opponent anxiously looks at their watch." "Your opponent holds a stern poker face and grins.")
+    public choices archetypedChoice() {
         double[] weights = {0, 0.3333, 0.3333, 0.3333};
 
         switch (atype) {
@@ -83,20 +69,20 @@ public class CPU extends Player {
             }
 
             case SEAGULL -> { // bC.values = NONE, BOULDER, BLANKET, BIRD
-                return weightedRandom(brpsChoices.values(), new double[]{0, 0.25, 0.25, 0.5}, false);
+                return weightedRandom(choices.values(), new double[]{0, 0.25, 0.25, 0.5}, false);
             }
 
             case GEOLOGIST -> {
-                return weightedRandom(brpsChoices.values(), new double[]{0, 0.5, 0.25, 0.25}, false);
+                return weightedRandom(choices.values(), new double[]{0, 0.5, 0.25, 0.25}, false);
             }
 
             case INSOMNIAC -> {
-                return weightedRandom(brpsChoices.values(), new double[]{0, 0.25, 0.5, 0.25}, false);
+                return weightedRandom(choices.values(), new double[]{0, 0.25, 0.5, 0.25}, false);
             }
 
             case STRATEGIST -> {
-                for (brpsChoices choice : choiceCache.subList(choiceCache.size()-2, choiceCache.size())) {
-                    int winnerOrdinal = (choice.ordinal() + 1 > 3) ? 1 : choice.ordinal() + 1; // See below chart for logic. This wraps value back to 1 if exceeding max index (3).
+                for (choices choice : choiceCache.subList(safeIndex(choiceCache, choiceCache.size()-2), choiceCache.size())) {
+                    int winnerOrdinal = (opponents.get(0).choice.ordinal() + 1 > 3) ? 1 : opponents.get(0).choice.ordinal() + 1; // See below chart for logic. This wraps value back to 1 if exceeding max index (3).
                     editWeights(weights, winnerOrdinal, 0.15);
                 }
 
@@ -118,7 +104,7 @@ public class CPU extends Player {
                 // ORDINALS:                   (3)                     (1)                    (2)
                 // Only one option is boosted per time. Boost is relative to how close it is to each option.
                 double hourTime = (double) LocalDateTime.now().getSecond() / 3600;
-                brpsChoices intervalChoice = (hourTime < 12) ? ((hourTime > 4) ? brpsChoices.BIRD : brpsChoices.BLANKET) : ((hourTime < 20) ? brpsChoices.BOULDER : brpsChoices.BLANKET); // 4 < time < 12 = bird, 12 < time < 20 = boulder, everything else = blanket
+                choices intervalChoice = (hourTime < 12) ? ((hourTime > 4) ? choices.BIRD : choices.BLANKET) : ((hourTime < 20) ? choices.BOULDER : choices.BLANKET); // 4 < time < 12 = bird, 12 < time < 20 = boulder, everything else = blanket
                 int hourMarker = ((intervalChoice.ordinal() + 1 > 3) ? 1 : intervalChoice.ordinal() + 1) * 8; // 8 * interval # (equivalent to ordinal+1) = time marker.
 
                 editWeights(weights, intervalChoice.ordinal(), 0.7 - (Math.abs(hourMarker - hourTime) * 0.175)); // Formula: 0.7 - |(n - m) * 0.175|. Thus, at max difference (4 hr), =0 and at min difference (0 hr), =0.7.
@@ -126,7 +112,7 @@ public class CPU extends Player {
 
 
             case AMATEUR -> {
-                for (brpsChoices choice : choiceCache.subList(choiceCache.size()-2, choiceCache.size())) {
+                for (choices choice : choiceCache.subList(safeIndex(choiceCache, choiceCache.size()-2), choiceCache.size())) {
                     editWeights(weights, choice.ordinal(), 0.2);
                 }
             }
@@ -178,8 +164,8 @@ public class CPU extends Player {
                     if (Math.random() > usageFailChance[i]) {
                         switch (i) {
                             case 0 -> { // Axiom 1: opponent same move twice = use winning move to other choices // RPS sequence priority
-                                for (brpsChoices choice : opponents.get(0).choiceCache.subList(choiceCache.size()-2, choiceCache.size())) {
-                                    int winnerOrdinalToNext = (choice.ordinal() + 2 > 3) ? 1 : choice.ordinal() + 1; // todo: TESTME
+                                for (choices choice : opponents.get(0).choiceCache.subList(safeIndex(choiceCache, choiceCache.size()-2), choiceCache.size())) {
+                                    int winnerOrdinalToNext = (opponents.get(0).choice.ordinal() + 2 > 3) ? 1 : opponents.get(0).choice.ordinal() + 1; // todo: TESTME
 
                                     // given choice
                                     // 0              1       2        3
@@ -197,7 +183,7 @@ public class CPU extends Player {
 
                             case 1 -> { // Axiom 2: play scissors first round
                                 if (choiceCache.size() == 0)
-                                    return brpsChoices.BIRD;
+                                    return choices.BIRD;
                             }
 
                             case 2 -> { // Axiom 3: switch moves if lose
@@ -206,7 +192,19 @@ public class CPU extends Player {
                             }
 
                             case 3 -> { // Axiom 4: look for hand hints
-                                
+                                double successfulHintInterpretationChance = 0.6; // SHIC. Yes, that's quite shic.
+                                int winnerOrdinal = (opponents.get(0).choice.ordinal() + 1 > 3) ? 1 : opponents.get(0).choice.ordinal() + 1;
+
+                                if (Math.random() < ((CPU)opponents.get(0)).hintRate) {
+                                    System.out.println(embellishMessage(hintEmbellims, "he", this));
+
+                                    if (Math.random() < successfulHintInterpretationChance)
+                                        editWeights(weights, winnerOrdinal, 0.7);
+
+                                }
+                                else {
+                                    System.out.println(embellishMessage(failedHintEmbellims, "fhe", this));
+                                }
                             }
 
                             case 4 -> { // Axiom 5: reverse psych
@@ -214,9 +212,11 @@ public class CPU extends Player {
                             }
 
                             case 5 -> { // Axiom 6: predict rock if opponent has lost 3x
-                                Object[] lastThreeStates = opponents.get(0).stateCache.subList(stateCache.size()-3, stateCache.size()).toArray();
-                                if (Arrays.stream(lastThreeStates).allMatch(s -> s.equals(brpsStates.LOSE))) { // Opponent lost 3x
-                                    return brpsChoices.BLANKET; // Blanket to kill boulder
+                                if (stateCache.size() >= 3) {
+                                    Object[] lastThreeStates = opponents.get(0).stateCache.subList(stateCache.size() - 3, stateCache.size()).toArray();
+                                    if (Arrays.stream(lastThreeStates).allMatch(s -> s.equals(gameStates.LOSE))) { // Opponent lost 3x
+                                        return choices.BLANKET; // Blanket to kill boulder
+                                    }
                                 }
                             }
 
@@ -239,7 +239,7 @@ public class CPU extends Player {
             }
         }
 
-        return weightedRandom(brpsChoices.values(), weights, false);
+        return weightedRandom(choices.values(), weights, false);
     }
 
 
@@ -279,11 +279,35 @@ public class CPU extends Player {
         return Math.random()*(lowerOffset + upperOffset) + base - lowerOffset;
     }
 
-    public static List<String> generateArchetypeProgram(int depth) {
+
+
+    public static <T extends Collection<E>, E> int[] safeIndex(T collection, int startIndex, int endIndex) { // <+> APM
+        assert(collection.size() != 0) : "Error: unable to safe-index an empty collection!";
+        int maxIndex = collection.size() - 1;
+
+        startIndex = Math.max(startIndex, 0); // disallowed sIndex = negative
+        endIndex = Math.min(endIndex, maxIndex); // disallowed eIndex = beyond collection max index
+
+        return new int[]{startIndex, endIndex};
+    }
+
+    public static <T extends Collection<E>, E> int safeIndex(T collection, int index) { // <+> APM (overload)
+        assert(collection.size() != 0) : "Error: unable to safe-index an empty collection!";
+        int maxIndex = collection.size()-1;
+
+        return (index < 0) ? 0 : Math.min(index, maxIndex); // (negative) ? [true] return 0 : ([false] (beyond maxIndex) ? [true] return maxIndex : [false] return index);
+    }
+
+    @Override
+    public String toString() {
+        return "The opponent";
+    }
+
+    /*public static List<String> generateArchetypeProgram(int depth) {
 
     }
 
     public static List<String> compileArchetypeProgram() {
 
-    }
+    }*/
 }

@@ -9,40 +9,34 @@ import java.util.stream.Collectors;
 
 public class Player extends BrpsGame
 {
-    List<brpsChoices> choiceCache;
-    List<brpsStates> stateCache;
+    List<choices> choiceCache;
+    List<gameStates> stateCache;
+    gameStates gameState;
     List<Player> opponents;
-    brpsChoices choice;       //          0                  1             2          3        4       5
+    boolean hasPlayerAhead;
+    choices choice;       //          0                  1             2          3        4       5
     int[] stats = new int[6]; // # of boulders played, # of blankets, # of birds, victories, losses, ties
 
 
     public Player() {
-        choice = brpsChoices.NONE;
+        choice = choices.NONE;
         choiceCache = new ArrayList<>();
         stateCache = new ArrayList<>();
         Arrays.fill(stats, 0);
-
-        opponents = players
-                .stream()
-                .filter(p -> !p.equals(this)) // All players except this player
-                .collect(Collectors.toList());
+        hasPlayerAhead = true;
     }
 
-    public Player(brpsChoices ch, int[] st) {
+    public Player(choices ch, int[] st) {
         assert(st.length == stats.length) : "Player instantiation failed: stats length (" + st.length + ") does not match required length (" + stats.length + ")!";
         choice = ch;
         choiceCache = new ArrayList<>();
         stateCache = new ArrayList<>();
         stats = st;
-
-        opponents = players
-                .stream()
-                .filter(p -> !p.equals(this))
-                .collect(Collectors.toList());
+        hasPlayerAhead = true;
     }
 
     public void retrieveChoice(int playerIndex) { // REFACTOR
-        brpsChoices playerChoice = brpsChoices.valueOf(prompt("Player " + playerIndex + ", choose your selection.", "Error: that's not a choice!", toStringArray(brpsChoices.values()), false, false).toUpperCase());
+        choices playerChoice = choices.valueOf(prompt("Player " + (playerIndex + 1) + ", pick your weapon of choice.", "Error: that's not a choice!", toStringArray(choices.values()), false, false).toUpperCase());
         if (playerChoice.ordinal() == 0) {
             playerChoice = randomizeChoice();
             System.out.println("You randomly decided on " + playerChoice + "!");
@@ -51,11 +45,11 @@ public class Player extends BrpsGame
         choice = playerChoice;
     }
 
-    public static brpsChoices randomizeChoice() {
-        return brpsChoices.values()[(int)(Math.random()*3+1)]; // indices 1-3. index 0 = none so omitted.
+    public static choices randomizeChoice() {
+        return choices.values()[(int)(Math.random()*3+1)]; // indices 1-3. index 0 = none so omitted.
     }
 
-    public void updateStats(brpsStates gameState) {
+    public void updateStats(gameStates gameState) {
         switch (choice) {
             case BOULDER -> {
                 stats[0]++;
@@ -91,5 +85,21 @@ public class Player extends BrpsGame
         if (stateCache.size() > 10) // Game state cache (limit 10)
             stateCache.remove(0);
         stateCache.add(gameState);
+    }
+
+    public int indexPlayerAhead(int[] playerOrder) { // 0, 2, 1
+        return (playerOrder[players.indexOf(this)] == playerOrder[playerOrder.length-1]) ? playerOrder[players.indexOf(this)] : playerOrder[players.indexOf(this)] + 1; // If index of player == last index, there is no next player.
+    }
+
+    public void retrieveOpponents() {
+        opponents = players
+                .stream()
+                .filter(p -> !p.equals(this)) // All players except this player
+                .collect(Collectors.toList());
+    }
+
+    @Override
+    public String toString() {
+        return "You";
     }
 }
