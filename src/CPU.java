@@ -26,7 +26,6 @@ public class CPU extends Player {
     }
 
     archetype atype;
-    double hintRate; // 0.0 - 1.0. Higher = more hints (bad for winning)
 
 
     // Wikian-only attributes
@@ -137,7 +136,7 @@ public class CPU extends Player {
                 // - Statistically, most thrown moves are rock > paper > scissors, meaning rates are skewed as paper > scissors > rock.
 
                 // A wikian will only use a few of these axioms. Reverse psychology / hint analysis is used sparingly and often fails too.
-                // It may be even harder to play a wikian than a grandmaster because every few games strategies are rerolled -- although often there are very few strategies, and thus the wikian picks like an amateur.
+                // It may be even harder to play a wikian than a grandmaster because every few games strategies are rerolled -- although often there are very few strategies, and thus the wikian picks like a normie.
 
 
                 double[] strategyFailChance = {0.1, 0, 0.2, 0.6, 0.7, 0.3, 0.1}; // The chance a strategy will not be used at all.
@@ -274,12 +273,6 @@ public class CPU extends Player {
     }
 
 
-    // Returns a random number that's near a base #. lower is how much below base, upper is how much above base. See proof.
-    public static double proximityRandom(double base, double lowerOffset, double upperOffset) { // <+> APM
-        return Math.random()*(lowerOffset + upperOffset) + base - lowerOffset;
-    }
-
-
 
     public static <T extends Collection<E>, E> int[] safeIndex(T collection, int startIndex, int endIndex) { // <+> APM
         assert(collection.size() != 0) : "Error: unable to safe-index an empty collection!";
@@ -296,11 +289,6 @@ public class CPU extends Player {
         int maxIndex = collection.size()-1;
 
         return (index < 0) ? 0 : Math.min(index, maxIndex); // (negative) ? [true] return 0 : ([false] (beyond maxIndex) ? [true] return maxIndex : [false] return index);
-    }
-
-    @Override
-    public String toString() {
-        return "The opponent";
     }
 
     /*public static List<String> generateArchetypeProgram(int depth) {

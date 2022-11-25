@@ -13,6 +13,7 @@ public class Player extends BrpsGame
     List<gameStates> stateCache;
     gameStates gameState;
     List<Player> opponents;
+    double hintRate; // 0.0 - 1.0. Higher = more hints (bad for winning)
     boolean hasPlayerAhead;
     choices choice;       //          0                  1             2          3        4       5
     int[] stats = new int[6]; // # of boulders played, # of blankets, # of birds, victories, losses, ties
@@ -22,8 +23,11 @@ public class Player extends BrpsGame
         choice = choices.NONE;
         choiceCache = new ArrayList<>();
         stateCache = new ArrayList<>();
+        hintRate = proximityRandom(0.2, 0.1, 0.05);
+
         Arrays.fill(stats, 0);
         hasPlayerAhead = true;
+
     }
 
     public Player(choices ch, int[] st) {
@@ -31,15 +35,18 @@ public class Player extends BrpsGame
         choice = ch;
         choiceCache = new ArrayList<>();
         stateCache = new ArrayList<>();
+        hintRate = proximityRandom(0.3, 0.1, 0.05);
+
         stats = st;
         hasPlayerAhead = true;
     }
 
-    public void retrieveChoice(int playerIndex) { // REFACTOR
+    public void retrieveChoice(int playerIndex, boolean willHideChoice) {
         choices playerChoice = choices.valueOf(prompt("Player " + (playerIndex + 1) + ", pick your weapon of choice.", "Error: that's not a choice!", toStringArray(choices.values()), false, false).toUpperCase());
+
         if (playerChoice.ordinal() == 0) {
             playerChoice = randomizeChoice();
-            System.out.println("You randomly decided on " + playerChoice + "!");
+            System.out.println((willHideChoice) ? "Randomly picked a choice!" : "You randomly decided on " + playerChoice.toString().toLowerCase() + "!");
         }
 
         choice = playerChoice;
@@ -47,6 +54,11 @@ public class Player extends BrpsGame
 
     public static choices randomizeChoice() {
         return choices.values()[(int)(Math.random()*3+1)]; // indices 1-3. index 0 = none so omitted.
+    }
+
+    // Returns a random number that's near a base #. lower is how much below base, upper is how much above base. See proof.
+    public static double proximityRandom(double base, double lowerOffset, double upperOffset) { // <+> APM
+        return Math.random()*(lowerOffset + upperOffset) + base - lowerOffset;
     }
 
     public void updateStats(gameStates gameState) {
@@ -96,10 +108,5 @@ public class Player extends BrpsGame
                 .stream()
                 .filter(p -> !p.equals(this)) // All players except this player
                 .collect(Collectors.toList());
-    }
-
-    @Override
-    public String toString() {
-        return "You";
     }
 }
